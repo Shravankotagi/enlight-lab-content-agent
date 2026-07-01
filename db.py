@@ -132,7 +132,7 @@ def get_review_queue(organization_id: str) -> list[dict]:
     'instructor review & approval workflow' requirement."""
     res = (
         supabase.table("generated_content")
-        .select("*, content_sources!inner(filename, source_type)")
+        .select("*, content_sources(filename, source_type)")
         .eq("organization_id", organization_id)
         .eq("status", "pending_review")
         .order("created_at")
