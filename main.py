@@ -139,6 +139,14 @@ def get_job_status(job_id: str):
     )
 
 
+@app.get("/content/review-queue", dependencies=[Depends(require_auth)])
+def review_queue(organization_id: str):
+    """Per PRD 'instructor review & approval workflow' - everything
+    generated content starts as pending_review and instructors must
+    explicitly approve before it's usable."""
+    return db.get_review_queue(organization_id)
+
+
 @app.get("/content/{source_id}", dependencies=[Depends(require_auth)])
 def get_content(source_id: str, organization_id: str):
     source = db.get_source(source_id, organization_id)
@@ -182,12 +190,6 @@ async def regenerate_content(content_id: str, organization_id: str,
     return {"job_id": job_id, "source_id": source_id, "status": "processing"}
 
 
-@app.get("/content/review-queue", dependencies=[Depends(require_auth)])
-def review_queue(organization_id: str):
-    """Per PRD 'instructor review & approval workflow' - everything
-    generated content starts as pending_review and instructors must
-    explicitly approve before it's usable."""
-    return db.get_review_queue(organization_id)
 
 
 @app.post("/content/{content_id}/approve", dependencies=[Depends(require_auth)])
