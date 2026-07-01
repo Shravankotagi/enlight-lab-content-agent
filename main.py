@@ -41,6 +41,7 @@ load_dotenv()
 
 API_KEY = os.environ.get("CONTENT_AGENT_API_KEY")
 
+# Content Agent service for Enlight Lab. (Trigger Redeploy)
 app = FastAPI(title="Enlight Lab - Content Generation & Curation Agent", version="0.1.0")
 
 app.add_middleware(
