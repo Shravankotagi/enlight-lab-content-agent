@@ -292,18 +292,10 @@ async def regenerate_content(content_id: str, organization_id: str,
     lighter-weight per-content-type regeneration can be added later if
     instructors want more granular control."""
     # Look up the source this content item belongs to
-    existing = (
-        db.supabase.table("generated_content")
-        .select("source_id")
-        .eq("id", content_id)
-        .eq("organization_id", organization_id)
-        .maybe_single()
-        .execute()
-    )
-    if not existing or not existing.data:
+    source_id = db.get_content_source_id(content_id, organization_id)
+    if not source_id:
         raise HTTPException(status_code=404, detail="Content not found")
 
-    source_id = existing.data["source_id"]
     source = db.get_source(source_id, organization_id)
     if not source:
         raise HTTPException(status_code=404, detail="Source not found")
@@ -356,6 +348,45 @@ def audit_trail(content_id: str):
 @app.get("/curated/{source_id}", dependencies=[Depends(require_auth)])
 def curated_references(source_id: str, organization_id: str):
     return db.get_curated_references(source_id, organization_id)
+
+
+@app.get("/content/export/moodle-xml", dependencies=[Depends(require_auth)])
+def export_source_quizzes(content_source_id: str, organization_id: str):
+    res = db.supabase.table("approved_quizzes").select("*").eq("content_source_id", content_source_id).eq("organization_id", organization_id).execute()
+    if not res or not res.data:
+        raise HTTPException(status_code=404, detail="No approved quizzes found for this source")
+    
+    from moodle_export import generate_moodle_xml
+    xml_str = generate_moodle_xml(res.data)
+    
+    from fastapi import Response
+    return Response(
+        content=xml_str,
+        media_type="text/xml",
+        headers={
+            "Content-Disposition": f'attachment; filename="moodle_export_{content_source_id}.xml"'
+        }
+    )
+
+
+@app.get("/content/{content_id}/export/moodle-xml", dependencies=[Depends(require_auth)])
+def export_single_quiz(content_id: str, organization_id: str):
+    res = db.supabase.table("approved_quizzes").select("*").eq("id", content_id).eq("organization_id", organization_id).maybe_single().execute()
+    if not res or not res.data:
+        raise HTTPException(status_code=404, detail="Approved quiz not found")
+    
+    from moodle_export import generate_moodle_xml
+    xml_str = generate_moodle_xml([res.data])
+    
+    from fastapi import Response
+    return Response(
+        content=xml_str,
+        media_type="text/xml",
+        headers={
+            "Content-Disposition": f'attachment; filename="moodle_export_{content_id}.xml"'
+        }
+    )
+
 
 
 if __name__ == "__main__":

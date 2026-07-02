@@ -71,7 +71,105 @@ def get_source(source_id: str, organization_id: str) -> Optional[dict]:
 
 
 # ---------------------------------------------------------------------------
-# generated_content
+# helper functions for the 8 new tables
+# ---------------------------------------------------------------------------
+
+def _to_legacy_format(row: dict, content_type: str, status: str) -> dict:
+    item = {
+        "id": row["id"],
+        "organization_id": row["organization_id"],
+        "source_id": row["content_source_id"],
+        "content_type": content_type,
+        "bloom_level": row.get("bloom_level"),
+        "quality_score": row.get("quality_score"),
+        "version": row.get("version", 1),
+        "status": status,
+        "created_at": row.get("created_at"),
+        "reviewed_by": row.get("reviewed_by"),
+        "reviewed_at": row.get("reviewed_at"),
+    }
+    
+    if "content_sources" in row:
+        item["content_sources"] = row["content_sources"]
+        
+    if content_type == "quiz":
+        ans_type = row.get("answer_type", "open_ended")
+        item["format"] = ans_type
+        item["payload"] = {
+            "question": row.get("question"),
+            "options": row.get("options"),
+            "correct_answer": row.get("correct_answer"),
+            "answer": row.get("correct_answer")
+        }
+    elif content_type == "flashcard":
+        item["format"] = "na"
+        item["payload"] = {
+            "front": row.get("front"),
+            "back": row.get("back")
+        }
+    elif content_type == "summary":
+        item["format"] = "na"
+        item["payload"] = {
+            "summary": row.get("summary"),
+            "key_takeaways": row.get("key_takeaways")
+        }
+    elif content_type == "exercise":
+        cs = row.get("case_study")
+        is_case = cs is not None and isinstance(cs, dict) and cs.get("scenario")
+        item["format"] = "case_study" if is_case else "open_ended"
+        item["payload"] = {
+            "title": row.get("title") or "Practice Exercise",
+            "task": row.get("task"),
+            "prompt": row.get("task"),
+            "question": row.get("task")
+        }
+        if is_case:
+            item["payload"]["scenario"] = cs.get("scenario")
+            
+    return item
+
+
+def _get_table_names(content_type: str) -> tuple[str, str]:
+    if content_type == "quiz":
+        plural = "quizzes"
+    elif content_type == "exercise":
+        plural = "exercises"
+    elif content_type == "summary":
+        plural = "summaries"
+    elif content_type == "flashcard":
+        plural = "flashcards"
+    else:
+        raise ValueError(f"Unknown content type: {content_type}")
+    return f"review_{plural}", f"approved_{plural}"
+
+
+def _find_review_item(content_id: str, organization_id: str) -> tuple[Optional[str], Optional[dict]]:
+    for c_type in ("quiz", "flashcard", "summary", "exercise"):
+        review_table, _ = _get_table_names(c_type)
+        res = supabase.table(review_table).select("*").eq("id", content_id).eq("organization_id", organization_id).maybe_single().execute()
+        if res and res.data:
+            return c_type, res.data
+    return None, None
+
+
+def get_content_source_id(content_id: str, organization_id: str) -> Optional[str]:
+    for c_type in ("quiz", "flashcard", "summary", "exercise"):
+        review_table, approved_table = _get_table_names(c_type)
+        res = supabase.table(review_table).select("content_source_id").eq("id", content_id).eq("organization_id", organization_id).maybe_single().execute()
+        if res and res.data:
+            return res.data["content_source_id"]
+            
+    for c_type in ("quiz", "flashcard", "summary", "exercise"):
+        review_table, approved_table = _get_table_names(c_type)
+        res = supabase.table(approved_table).select("content_source_id").eq("id", content_id).eq("organization_id", organization_id).maybe_single().execute()
+        if res and res.data:
+            return res.data["content_source_id"]
+            
+    return None
+
+
+# ---------------------------------------------------------------------------
+# review & approved content operations
 # ---------------------------------------------------------------------------
 
 def insert_generated_content(organization_id: str, source_id: str, content_type: str,
@@ -80,108 +178,130 @@ def insert_generated_content(organization_id: str, source_id: str, content_type:
                               quality_score: Optional[float] = None,
                               version: int = 1,
                               status: str = "draft") -> dict:
-    res = supabase.table("generated_content").insert({
+    review_table, _ = _get_table_names(content_type)
+    if content_type == "quiz":
+        data = {
+            "question": payload.get("question", "Quiz Question"),
+            "answer_type": format,
+            "options": payload.get("options"),
+            "correct_answer": payload.get("correct_answer") or payload.get("answer")
+        }
+    elif content_type == "flashcard":
+        data = {
+            "front": payload.get("front", "Flashcard Term"),
+            "back": payload.get("back", "Flashcard Definition")
+        }
+    elif content_type == "summary":
+        data = {
+            "summary": payload.get("summary", "Summary Overview"),
+            "key_takeaways": payload.get("key_takeaways")
+        }
+    elif content_type == "exercise":
+        data = {
+            "title": payload.get("title") or "Practice Exercise",
+            "task": payload.get("prompt") or payload.get("task") or payload.get("question") or payload.get("scenario") or "Exercise Prompt",
+            "case_study": {"scenario": payload.get("scenario")} if format == "case_study" or "scenario" in payload else None
+        }
+    else:
+        raise ValueError(f"Unknown content type: {content_type}")
+
+    common = {
         "organization_id": organization_id,
-        "source_id": source_id,
-        "content_type": content_type,
-        "format": format,
+        "content_source_id": source_id,
+        "course_id": None,
         "bloom_level": bloom_level,
-        "payload": payload,
         "quality_score": quality_score,
-        "version": version,
-        "status": status,
-    }).execute()
+        "version": version
+    }
+    data.update(common)
+    res = supabase.table(review_table).insert(data).execute()
     row = res.data[0]
-    _log_audit(row["id"], "generated", "system",
-               f"content_type={content_type} version={version}")
-    return row
+    _log_audit(row["id"], "generated", "system", f"content_type={content_type} version={version}")
+    return _to_legacy_format(row, content_type, "pending_review")
 
 
 def get_next_version(source_id: str, content_type: str) -> int:
-    """Content is versioned per (source, content_type) pair - regenerating a
-    quiz for a source creates version 2, 3, etc. rather than overwriting."""
-    res = (
-        supabase.table("generated_content")
-        .select("version")
-        .eq("source_id", source_id)
-        .eq("content_type", content_type)
-        .order("version", desc=True)
-        .limit(1)
-        .execute()
-    )
-    if res.data:
-        return res.data[0]["version"] + 1
-    return 1
+    review_table, approved_table = _get_table_names(content_type)
+    
+    v1 = 0
+    res1 = supabase.table(review_table).select("version").eq("content_source_id", source_id).order("version", desc=True).limit(1).execute()
+    if res1.data:
+        v1 = res1.data[0]["version"]
+        
+    v2 = 0
+    res2 = supabase.table(approved_table).select("version").eq("content_source_id", source_id).order("version", desc=True).limit(1).execute()
+    if res2.data:
+        v2 = res2.data[0]["version"]
+        
+    return max(v1, v2) + 1
 
 
 def get_content_for_source(source_id: str, organization_id: str) -> list[dict]:
-    res = (
-        supabase.table("generated_content")
-        .select("*")
-        .eq("source_id", source_id)
-        .eq("organization_id", organization_id)
-        .order("content_type")
-        .order("version", desc=True)
-        .execute()
-    )
-    return res.data or []
+    items = []
+    for c_type in ("quiz", "flashcard", "summary", "exercise"):
+        review_table, approved_table = _get_table_names(c_type)
+        res = supabase.table(review_table).select("*").eq("content_source_id", source_id).eq("organization_id", organization_id).execute()
+        for row in (res.data or []):
+            items.append(_to_legacy_format(row, c_type, "pending_review"))
+
+    for c_type in ("quiz", "flashcard", "summary", "exercise"):
+        review_table, approved_table = _get_table_names(c_type)
+        res = supabase.table(approved_table).select("*").eq("content_source_id", source_id).eq("organization_id", organization_id).execute()
+        for row in (res.data or []):
+            items.append(_to_legacy_format(row, c_type, "approved"))
+
+    items.sort(key=lambda x: (x["content_type"], -x["version"]))
+    return items
 
 
 def get_review_queue(organization_id: str) -> list[dict]:
-    """All content awaiting instructor review, per PRD's
-    'instructor review & approval workflow' requirement."""
-    res = (
-        supabase.table("generated_content")
-        .select("*, content_sources(filename, source_type)")
-        .eq("organization_id", organization_id)
-        .eq("status", "pending_review")
-        .order("created_at", desc=True)
-        .execute()
-    )
-    return res.data or []
+    items = []
+    for c_type in ("quiz", "flashcard", "summary", "exercise"):
+        review_table, _ = _get_table_names(c_type)
+        res = supabase.table(review_table).select("*, content_sources(filename, source_type)").eq("organization_id", organization_id).execute()
+        for row in (res.data or []):
+            items.append(_to_legacy_format(row, c_type, "pending_review"))
+    items.sort(key=lambda x: x.get("created_at") or "", reverse=True)
+    return items
 
 
 def set_review_decision(content_id: str, organization_id: str, decision: str,
-                         reviewer_id: str, notes: Optional[str] = None) -> dict:
-    res = (
-        supabase.table("generated_content")
-        .update({
-            "status": decision,
-            "reviewed_by": reviewer_id,
-            "reviewed_at": _now(),
-        })
-        .eq("id", content_id)
-        .eq("organization_id", organization_id)
-        .select("*")
-        .single()
-        .execute()
-    )
+                        reviewer_id: str, notes: Optional[str] = None) -> dict:
+    c_type, row_data = _find_review_item(content_id, organization_id)
+    if not c_type or not row_data:
+        return {}
+        
+    review_table, approved_table = _get_table_names(c_type)
+    supabase.table(review_table).delete().eq("id", content_id).eq("organization_id", organization_id).execute()
+    
+    if decision == "approved":
+        row_data["reviewed_by"] = reviewer_id
+        row_data["reviewed_at"] = _now()
+        supabase.table(approved_table).insert(row_data).execute()
+        
     _log_audit(content_id, decision, reviewer_id, notes)
-    return res.data
+    return _to_legacy_format(row_data, c_type, decision)
 
 
 def set_batch_review_decision(content_ids: list[str], organization_id: str, decision: str,
                               reviewer_id: str, notes: Optional[str] = None) -> int:
-    if not content_ids:
-        return 0
-    res = (
-        supabase.table("generated_content")
-        .update({
-            "status": decision,
-            "reviewed_by": reviewer_id,
-            "reviewed_at": _now(),
-        })
-        .in_("id", content_ids)
-        .eq("organization_id", organization_id)
-        .execute()
-    )
+    count = 0
     for cid in content_ids:
+        c_type, row_data = _find_review_item(cid, organization_id)
+        if not c_type or not row_data:
+            continue
+            
+        review_table, approved_table = _get_table_names(c_type)
+        supabase.table(review_table).delete().eq("id", cid).eq("organization_id", organization_id).execute()
+        
+        if decision == "approved":
+            row_data["reviewed_by"] = reviewer_id
+            row_data["reviewed_at"] = _now()
+            supabase.table(approved_table).insert(row_data).execute()
+            
         _log_audit(cid, decision, reviewer_id, notes)
-    return len(res.data) if res.data else 0
-
-
-def mark_pending_review(content_id: str) -> None:
-    supabase.table("generated_content").update({"status": "pending_review"}).eq("id", content_id).execute()
+        count += 1
+    return count
 
 
 # ---------------------------------------------------------------------------

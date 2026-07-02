@@ -131,7 +131,6 @@ async def curate_external_content(learning_objectives: list[str], key_concepts: 
             "description": "Set GEMINI_API_KEY for real web-search-based curation.",
             "relevance_score": 0.5,
         }]
-
     try:
         prompt = f"""Find 3-5 high-quality external resources (articles, videos, or
 case studies) that align with these learning objectives: {learning_objectives}
@@ -141,24 +140,48 @@ After searching, respond with ONLY valid JSON (no markdown fences, no preamble):
 a JSON array where each element has this shape:
 {{"title": "...", "url": "...", "description": "...", "relevance_score": 0.0-1.0}}
 """
-        # Web search grounding needs its own call without a forced JSON
-        # response type, since the google_search tool and structured JSON
-        # output can't be combined in one request. We ask for JSON in the
-        # prompt text itself and parse leniently.
-        resp = _client.models.generate_content(
-            model=MODEL_NAME,
-            contents=prompt,
-            config=types.GenerateContentConfig(
-                tools=[types.Tool(google_search=types.GoogleSearch())],
-            ),
-        )
-        result = _parse_json(resp.text)
-        return result if isinstance(result, list) else result.get("references", [])
+        try:
+            # Web search grounding needs its own call without a forced JSON
+            # response type, since the google_search tool and structured JSON
+            # output can't be combined in one request. We ask for JSON in the
+            # prompt text itself and parse leniently.
+            resp = _client.models.generate_content(
+                model=MODEL_NAME,
+                contents=prompt,
+                config=types.GenerateContentConfig(
+                    tools=[types.Tool(google_search=types.GoogleSearch())],
+                ),
+            )
+            result = _parse_json(resp.text)
+            return result if isinstance(result, list) else result.get("references", [])
+        except Exception as search_err:
+            print(f"[WARNING] Google Search tool failed ({search_err}). Falling back to standard model recommendations...")
+            # Fallback: ask model to recommend resources based on its internal knowledge (no Google Search tool)
+            resp = _client.models.generate_content(
+                model=MODEL_NAME,
+                contents=prompt,
+                config=types.GenerateContentConfig(
+                    response_mime_type="application/json",
+                    response_schema=types.Schema(
+                        type=types.Type.ARRAY,
+                        items=types.Schema(
+                            type=types.Type.OBJECT,
+                            properties={
+                                "title": types.Schema(type=types.Type.STRING),
+                                "url": types.Schema(type=types.Type.STRING),
+                                "description": types.Schema(type=types.Type.STRING),
+                                "relevance_score": types.Schema(type=types.Type.NUMBER),
+                            },
+                            required=["title", "url", "description", "relevance_score"]
+                        )
+                    )
+                )
+            )
+            result = json.loads(resp.text)
+            return result if isinstance(result, list) else result.get("references", [])
     except Exception as e:
-        print(f"[WARNING] Web search curation failed, returning empty list: {e}")
+        print(f"[WARNING] Both curation and fallback failed, returning empty list: {e}")
         return []
-
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------

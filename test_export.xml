@@ -1,0 +1,236 @@
+<?xml version="1.0" encoding="utf-8"?>
+<quiz>
+  <question type="essay">
+    <name>
+      <text>Compare the data handling goals of classical super...</text>
+    </name>
+    <questiontext format="html">
+      <text>Compare the data handling goals of classical supervised learning with the training process of modern Large Language Models.</text>
+    </questiontext>
+    <generalfeedback format="html"/>
+    <defaultgrade>1.0000000</defaultgrade>
+    <penalty>0.3333333</penalty>
+    <hidden>0</hidden>
+    <idnumber/>
+    <responseformat>editor</responseformat>
+    <responserequired>1</responserequired>
+    <responsefieldlines>15</responsefieldlines>
+    <attachments>0</attachments>
+    <attachmentsrequired>0</attachmentsrequired>
+    <graderinfo format="html"/>
+    <responsetemplate format="html"/>
+    <answer fraction="0">
+      <text/>
+    </answer>
+  </question>
+  <question type="essay">
+    <name>
+      <text>Discuss the trade-offs between using stochastic sa...</text>
+    </name>
+    <questiontext format="html">
+      <text>Discuss the trade-offs between using stochastic sampling in LLMs. Why might a model deployer find the resulting randomness both desirable and problematic?</text>
+    </questiontext>
+    <generalfeedback format="html"/>
+    <defaultgrade>1.0000000</defaultgrade>
+    <penalty>0.3333333</penalty>
+    <hidden>0</hidden>
+    <idnumber/>
+    <responseformat>editor</responseformat>
+    <responserequired>1</responserequired>
+    <responsefieldlines>15</responsefieldlines>
+    <attachments>0</attachments>
+    <attachmentsrequired>0</attachmentsrequired>
+    <graderinfo format="html"/>
+    <responsetemplate format="html"/>
+    <answer fraction="0">
+      <text/>
+    </answer>
+  </question>
+  <question type="multichoice">
+    <name>
+      <text>What is the fundamental shift from traditional sup...</text>
+    </name>
+    <questiontext format="html">
+      <text>What is the fundamental shift from traditional supervised machine learning to deep learning models regarding data input?</text>
+    </questiontext>
+    <generalfeedback format="html"/>
+    <defaultgrade>1.0000000</defaultgrade>
+    <penalty>0.3333333</penalty>
+    <hidden>0</hidden>
+    <idnumber/>
+    <single>true</single>
+    <shuffleanswers>true</shuffleanswers>
+    <answernumbering>abc</answernumbering>
+    <showstandardinstruction>0</showstandardinstruction>
+    <answer fraction="0" format="html">
+      <text>Deep learning moves from automated representation to hand-crafted features.</text>
+      <feedback format="html">
+        <text>Incorrect.</text>
+      </feedback>
+    </answer>
+    <answer fraction="100" format="html">
+      <text>Deep learning moves from hand-crafted feature representation to automated representation learning.</text>
+      <feedback format="html">
+        <text>Correct!</text>
+      </feedback>
+    </answer>
+    <answer fraction="0" format="html">
+      <text>Deep learning ignores the need for any representation of data.</text>
+      <feedback format="html">
+        <text>Incorrect.</text>
+      </feedback>
+    </answer>
+    <answer fraction="0" format="html">
+      <text>Deep learning relies exclusively on linear regression models.</text>
+      <feedback format="html">
+        <text>Incorrect.</text>
+      </feedback>
+    </answer>
+  </question>
+  <question type="essay">
+    <name>
+      <text>Explain how prompt engineering, such as decomposin...</text>
+    </name>
+    <questiontext format="html">
+      <text>Explain how prompt engineering, such as decomposing a problem into subproblems, can improve the coherence and utility of LLM outputs.</text>
+    </questiontext>
+    <generalfeedback format="html"/>
+    <defaultgrade>1.0000000</defaultgrade>
+    <penalty>0.3333333</penalty>
+    <hidden>0</hidden>
+    <idnumber/>
+    <responseformat>editor</responseformat>
+    <responserequired>1</responserequired>
+    <responsefieldlines>15</responsefieldlines>
+    <attachments>0</attachments>
+    <attachmentsrequired>0</attachmentsrequired>
+    <graderinfo format="html"/>
+    <responsetemplate format="html"/>
+    <answer fraction="0">
+      <text/>
+    </answer>
+  </question>
+  <question type="multichoice">
+    <name>
+      <text>What term is used to describe the initial set of w...</text>
+    </name>
+    <questiontext format="html">
+      <text>What term is used to describe the initial set of words provided to a language model that conditions the generated output?</text>
+    </questiontext>
+    <generalfeedback format="html"/>
+    <defaultgrade>1.0000000</defaultgrade>
+    <penalty>0.3333333</penalty>
+    <hidden>0</hidden>
+    <idnumber/>
+    <single>true</single>
+    <shuffleanswers>true</shuffleanswers>
+    <answernumbering>abc</answernumbering>
+    <showstandardinstruction>0</showstandardinstruction>
+    <answer fraction="0" format="html">
+      <text>Deep representation</text>
+      <feedback format="html">
+        <text>Incorrect.</text>
+      </feedback>
+    </answer>
+    <answer fraction="100" format="html">
+      <text>Context window</text>
+      <feedback format="html">
+        <text>Correct!</text>
+      </feedback>
+    </answer>
+    <answer fraction="0" format="html">
+      <text>Supervised label</text>
+      <feedback format="html">
+        <text>Incorrect.</text>
+      </feedback>
+    </answer>
+    <answer fraction="0" format="html">
+      <text>Probability distribution</text>
+      <feedback format="html">
+        <text>Incorrect.</text>
+      </feedback>
+    </answer>
+  </question>
+  <question type="multichoice">
+    <name>
+      <text>How does stochastic sampling influence the output ...</text>
+    </name>
+    <questiontext format="html">
+      <text>How does stochastic sampling influence the output of an LLM compared to a greedy approach?</text>
+    </questiontext>
+    <generalfeedback format="html"/>
+    <defaultgrade>1.0000000</defaultgrade>
+    <penalty>0.3333333</penalty>
+    <hidden>0</hidden>
+    <idnumber/>
+    <single>true</single>
+    <shuffleanswers>true</shuffleanswers>
+    <answernumbering>abc</answernumbering>
+    <showstandardinstruction>0</showstandardinstruction>
+    <answer fraction="0" format="html">
+      <text>Stochastic sampling ensures the output is always the most accurate answer.</text>
+      <feedback format="html">
+        <text>Incorrect.</text>
+      </feedback>
+    </answer>
+    <answer fraction="0" format="html">
+      <text>Stochastic sampling forces the model to choose the most likely word every time.</text>
+      <feedback format="html">
+        <text>Incorrect.</text>
+      </feedback>
+    </answer>
+    <answer fraction="100" format="html">
+      <text>Stochastic sampling introduces randomness, allowing for varied and creative responses.</text>
+      <feedback format="html">
+        <text>Correct!</text>
+      </feedback>
+    </answer>
+    <answer fraction="0" format="html">
+      <text>Stochastic sampling completely eliminates the possibility of hallucinations.</text>
+      <feedback format="html">
+        <text>Incorrect.</text>
+      </feedback>
+    </answer>
+  </question>
+  <question type="multichoice">
+    <name>
+      <text>What is the primary function of a Large Language M...</text>
+    </name>
+    <questiontext format="html">
+      <text>What is the primary function of a Large Language Model (LLM) as described in the text?</text>
+    </questiontext>
+    <generalfeedback format="html"/>
+    <defaultgrade>1.0000000</defaultgrade>
+    <penalty>0.3333333</penalty>
+    <hidden>0</hidden>
+    <idnumber/>
+    <single>true</single>
+    <shuffleanswers>true</shuffleanswers>
+    <answernumbering>abc</answernumbering>
+    <showstandardinstruction>0</showstandardinstruction>
+    <answer fraction="0" format="html">
+      <text>To act as a deterministic engine for finding facts.</text>
+      <feedback format="html">
+        <text>Incorrect.</text>
+      </feedback>
+    </answer>
+    <answer fraction="100" format="html">
+      <text>To predict the next word or token based on a given context window.</text>
+      <feedback format="html">
+        <text>Correct!</text>
+      </feedback>
+    </answer>
+    <answer fraction="0" format="html">
+      <text>To manually code logical rules for human conversation.</text>
+      <feedback format="html">
+        <text>Incorrect.</text>
+      </feedback>
+    </answer>
+    <answer fraction="0" format="html">
+      <text>To recover the latent structure of human thought.</text>
+      <feedback format="html">
+        <text>Incorrect.</text>
+      </feedback>
+    </answer>
+  </question>
+</quiz>

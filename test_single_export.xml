@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="utf-8"?>
+<quiz>
+  <question type="multichoice">
+    <name>
+      <text>What is the fundamental shift from traditional sup...</text>
+    </name>
+    <questiontext format="html">
+      <text>What is the fundamental shift from traditional supervised machine learning to deep learning models regarding data input?</text>
+    </questiontext>
+    <generalfeedback format="html"/>
+    <defaultgrade>1.0000000</defaultgrade>
+    <penalty>0.3333333</penalty>
+    <hidden>0</hidden>
+    <idnumber/>
+    <single>true</single>
+    <shuffleanswers>true</shuffleanswers>
+    <answernumbering>abc</answernumbering>
+    <showstandardinstruction>0</showstandardinstruction>
+    <answer fraction="0" format="html">
+      <text>Deep learning moves from automated representation to hand-crafted features.</text>
+      <feedback format="html">
+        <text>Incorrect.</text>
+      </feedback>
+    </answer>
+    <answer fraction="100" format="html">
+      <text>Deep learning moves from hand-crafted feature representation to automated representation learning.</text>
+      <feedback format="html">
+        <text>Correct!</text>
+      </feedback>
+    </answer>
+    <answer fraction="0" format="html">
+      <text>Deep learning ignores the need for any representation of data.</text>
+      <feedback format="html">
+        <text>Incorrect.</text>
+      </feedback>
+    </answer>
+    <answer fraction="0" format="html">
+      <text>Deep learning relies exclusively on linear regression models.</text>
+      <feedback format="html">
+        <text>Incorrect.</text>
+      </feedback>
+    </answer>
+  </question>
+</quiz>
