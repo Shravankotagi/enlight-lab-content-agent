@@ -160,6 +160,26 @@ def set_review_decision(content_id: str, organization_id: str, decision: str,
     return res.data
 
 
+def set_batch_review_decision(content_ids: list[str], organization_id: str, decision: str,
+                              reviewer_id: str, notes: Optional[str] = None) -> int:
+    if not content_ids:
+        return 0
+    res = (
+        supabase.table("generated_content")
+        .update({
+            "status": decision,
+            "reviewed_by": reviewer_id,
+            "reviewed_at": _now(),
+        })
+        .in_("id", content_ids)
+        .eq("organization_id", organization_id)
+        .execute()
+    )
+    for cid in content_ids:
+        _log_audit(cid, decision, reviewer_id, notes)
+    return len(res.data) if res.data else 0
+
+
 def mark_pending_review(content_id: str) -> None:
     supabase.table("generated_content").update({"status": "pending_review"}).eq("id", content_id).execute()
 

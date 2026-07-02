@@ -23,18 +23,20 @@ pattern once the dashboard integration is built.
 """
 
 import os
+import re
 import uuid
 from typing import Optional
 
-from fastapi import FastAPI, HTTPException, Depends, Header, BackgroundTasks
+from fastapi import FastAPI, HTTPException, Depends, Header, BackgroundTasks, Request, File, Form, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
 
 import db
 import graph
+import ingestion
 from models import (
     IngestRequest, IngestResponse, JobStatusResponse,
-    ReviewDecision, SourceStatus,
+    ReviewDecision, BatchReviewRequest, SourceStatus,
 )
 
 load_dotenv()
@@ -51,21 +53,21 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# In-memory job store for MVP. A pipeline run for a large PDF can take
-# 30s-2min (multiple LLM calls across 4 content types + retries), so this
-# is async with a poll endpoint rather than a blocking request.
-# TODO: swap for Redis or a Supabase-backed jobs table if this needs to
-# survive service restarts or scale beyond one instance.
 _jobs: dict[str, dict] = {}
 
 
-def require_auth(authorization: Optional[str] = Header(None)):
+def require_auth(authorization: Optional[str] = Header(None), x_api_key: Optional[str] = Header(None, alias="X-API-Key")):
     if not API_KEY:
-        # No key configured - allow through for local dev, but warn loudly.
-        print("[WARNING] CONTENT_AGENT_API_KEY not set - endpoint is UNAUTHENTICATED. "
-              "Set this before deploying to Railway.")
         return
-    if not authorization or authorization != f"Bearer {API_KEY}":
+    token = None
+    if authorization and authorization.startswith("Bearer "):
+        token = authorization[7:].strip()
+    elif x_api_key:
+        token = x_api_key.strip()
+    elif authorization:
+        token = authorization.strip()
+
+    if not token or token != API_KEY:
         raise HTTPException(status_code=401, detail="Invalid or missing bearer token")
 
 
@@ -75,7 +77,117 @@ def health():
 
 
 @app.post("/ingest", response_model=IngestResponse, dependencies=[Depends(require_auth)])
-async def ingest(req: IngestRequest, background_tasks: BackgroundTasks):
+async def ingest(
+    request: Request,
+    background_tasks: BackgroundTasks,
+    file: Optional[UploadFile] = File(None),
+    organization_id: Optional[str] = Form(None),
+    course_id: Optional[str] = Form(None),
+    source_type: Optional[str] = Form(None),
+    source_url: Optional[str] = Form(None),
+    filename: Optional[str] = Form(None),
+    title: Optional[str] = Form(None),
+    quiz_count: Optional[int] = Form(5),
+    flashcard_count: Optional[int] = Form(5),
+    summary_count: Optional[int] = Form(1),
+    exercise_count: Optional[int] = Form(2),
+):
+    content_type = request.headers.get("content-type", "")
+
+    # Case A: Multipart form / PDF Upload
+    if file is not None or "multipart/form-data" in content_type:
+        if file is None:
+            raise HTTPException(status_code=400, detail="No file uploaded")
+        
+        filename_str = file.filename or filename or title or "document.pdf"
+        if not filename_str.lower().endswith(".pdf") and file.content_type != "application/pdf":
+            raise HTTPException(status_code=400, detail="Invalid file type. Only PDF files are supported.")
+
+        pdf_bytes = await file.read()
+        if len(pdf_bytes) > 10 * 1024 * 1024:
+            raise HTTPException(status_code=400, detail="File size exceeds maximum limit of 10MB.")
+
+        org_id = organization_id or "00000000-0000-0000-0000-000000000001"
+        display_title = title or filename or file.filename or "Uploaded PDF"
+        requested_counts = {
+            "quiz": quiz_count if quiz_count is not None else 5,
+            "flashcard": flashcard_count if flashcard_count is not None else 5,
+            "summary": summary_count if summary_count is not None else 1,
+            "exercise": exercise_count if exercise_count is not None else 2,
+        }
+
+        try:
+            extracted_text = ingestion.parse_pdf_bytes(pdf_bytes)
+        except Exception as e:
+            err_msg = str(e)
+            source = db.create_source(
+                organization_id=org_id,
+                course_id=course_id,
+                source_type="pdf",
+                source_url="",
+                filename=display_title,
+            )
+            source_id = source["id"]
+            job_id = str(uuid.uuid4())
+            db.update_source_status(source_id, "failed", err_msg)
+            _jobs[job_id] = {
+                "source_id": source_id,
+                "status": "failed",
+                "current_step": "ingest",
+                "error": err_msg,
+            }
+            return IngestResponse(job_id=job_id, source_id=source_id, status=SourceStatus.failed)
+
+        # Upload extracted text as a plain text resource in Supabase Storage
+        clean_name = re.sub(r"[^a-zA-Z0-9]", "_", display_title)
+        storage_path = f"raw-text-{clean_name}-{uuid.uuid4()}.txt"
+        
+        try:
+            db.supabase.storage.from_("course-materials").upload(
+                storage_path,
+                extracted_text.encode("utf-8"),
+                {"content-type": "text/plain; charset=utf-8"}
+            )
+            public_url_data = db.supabase.storage.from_("course-materials").get_public_url(storage_path)
+            pdf_text_url = public_url_data
+        except Exception as upload_err:
+            print(f"[WARNING] Supabase storage upload failed: {upload_err}")
+            pdf_text_url = f"https://montijgrdxlfocvoeaxt.supabase.co/storage/v1/object/public/course-materials/{storage_path}"
+
+        source = db.create_source(
+            organization_id=org_id,
+            course_id=course_id,
+            source_type="pdf",
+            source_url=pdf_text_url,
+            filename=display_title,
+        )
+        source_id = source["id"]
+        job_id = str(uuid.uuid4())
+
+        _jobs[job_id] = {
+            "source_id": source_id,
+            "status": SourceStatus.processing.value,
+            "current_step": "queued",
+            "error": None,
+        }
+
+        background_tasks.add_task(
+            _run_pipeline_task, job_id, source_id, org_id,
+            course_id, "pdf", pdf_text_url, requested_counts
+        )
+
+        return IngestResponse(job_id=job_id, source_id=source_id, status=SourceStatus.processing)
+
+    # Case B: JSON Request
+    body = await request.json()
+    req = IngestRequest(**body)
+    requested_counts = {
+        "quiz": req.quiz_count if req.quiz_count is not None else 5,
+        "flashcard": req.flashcard_count if req.flashcard_count is not None else 5,
+        "summary": req.summary_count if req.summary_count is not None else 1,
+        "exercise": req.exercise_count if req.exercise_count is not None else 2,
+    }
+
     source = db.create_source(
         organization_id=req.organization_id,
         course_id=req.course_id,
@@ -95,24 +207,41 @@ async def ingest(req: IngestRequest, background_tasks: BackgroundTasks):
 
     background_tasks.add_task(
         _run_pipeline_task, job_id, source_id, req.organization_id,
-        req.course_id, req.source_type.value, req.source_url,
+        req.course_id, req.source_type.value, req.source_url, requested_counts
     )
 
     return IngestResponse(job_id=job_id, source_id=source_id, status=SourceStatus.processing)
 
 
 async def _run_pipeline_task(job_id: str, source_id: str, organization_id: str,
-                              course_id: Optional[str], source_type: str, source_url: str):
+                              course_id: Optional[str], source_type: str, source_url: str,
+                              requested_counts: Optional[dict] = None):
     db.update_source_status(source_id, "processing")
+    _jobs[job_id] = {
+        "source_id": source_id,
+        "status": "processing",
+        "current_step": "ingest",
+        "error": None,
+    }
     try:
-        final_state = await graph.run_pipeline(
-            job_id, source_id, organization_id, course_id, source_type, source_url
-        )
+        last_state = {}
+        async for event in graph.stream_pipeline(
+            job_id, source_id, organization_id, course_id, source_type, source_url, requested_counts
+        ):
+            step = event.get("step")
+            last_state = event.get("state", {})
+            _jobs[job_id] = {
+                "source_id": source_id,
+                "status": "processing",
+                "current_step": step,
+                "error": None,
+            }
+
         _jobs[job_id] = {
             "source_id": source_id,
-            "status": final_state.get("status", "failed"),
-            "current_step": final_state.get("current_step"),
-            "error": final_state.get("error"),
+            "status": last_state.get("status", "ready"),
+            "current_step": "finalize",
+            "error": last_state.get("error"),
         }
     except Exception as e:
         print(f"[ERROR] Pipeline crashed for job {job_id}: {e}")
@@ -208,6 +337,15 @@ def reject_content(content_id: str, organization_id: str, decision: ReviewDecisi
     if not updated:
         raise HTTPException(status_code=404, detail="Content not found")
     return updated
+
+
+@app.post("/content/batch-review", dependencies=[Depends(require_auth)])
+def batch_review(organization_id: str, request_body: BatchReviewRequest):
+    count = db.set_batch_review_decision(
+        request_body.content_ids, organization_id, request_body.decision.value,
+        request_body.reviewer_id, request_body.notes
+    )
+    return {"updated_count": count}
 
 
 @app.get("/content/{content_id}/audit-trail", dependencies=[Depends(require_auth)])

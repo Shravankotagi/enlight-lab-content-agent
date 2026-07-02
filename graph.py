@@ -28,6 +28,7 @@ class GraphState(TypedDict):
     course_id: Optional[str]
     source_type: str
     source_url: str
+    requested_counts: Optional[dict]
 
     raw_text: str
     learning_objectives: list[str]
@@ -93,6 +94,7 @@ async def generate_node(state: GraphState) -> GraphState:
             state["learning_objectives"],
             state["key_concepts"],
             state["raw_text"],
+            requested_counts=state.get("requested_counts"),
         )
         state.setdefault("generated_items", {})[content_type] = result.get("items", [])
         state.setdefault("quality_results", {})[content_type] = result.get("quality", {"passed": True, "score": None, "issues": []})
@@ -142,11 +144,43 @@ async def curate_node(state: GraphState) -> GraphState:
     return state
 
 
+def _normalize_payload(content_type: str, raw_payload: dict) -> dict:
+    if not isinstance(raw_payload, dict):
+        raw_payload = {"text": str(raw_payload)}
+    
+    payload = dict(raw_payload)
+    
+    if content_type == "flashcard":
+        front = payload.get("front") or payload.get("term") or payload.get("concept") or payload.get("question") or payload.get("title") or payload.get("prompt") or "Flashcard Term"
+        back = payload.get("back") or payload.get("definition") or payload.get("explanation") or payload.get("answer") or payload.get("details") or payload.get("text") or "Flashcard Definition"
+        payload["front"] = front
+        payload["back"] = back
+
+    elif content_type == "summary":
+        summary_text = payload.get("summary") or payload.get("overview") or payload.get("text") or payload.get("description") or payload.get("details") or "Summary Overview"
+        takeaways = payload.get("key_takeaways") or payload.get("key_points") or payload.get("takeaways") or []
+        if isinstance(takeaways, str):
+            takeaways = [takeaways]
+        payload["summary"] = summary_text
+        payload["key_takeaways"] = takeaways
+
+    elif content_type == "quiz":
+        question = payload.get("question") or payload.get("title") or payload.get("prompt") or payload.get("text") or "Quiz Question"
+        payload["question"] = question
+        if "answer" not in payload and "correct_answer" in payload:
+            payload["answer"] = payload["correct_answer"]
+
+    elif content_type == "exercise":
+        prompt_text = payload.get("prompt") or payload.get("question") or payload.get("task") or payload.get("scenario") or "Exercise Prompt"
+        payload["prompt"] = prompt_text
+
+    return payload
+
+
 async def finalize_node(state: GraphState) -> GraphState:
     """Persists everything to Supabase: generated content (versioned,
     status=pending_review so an instructor must approve it) and curated
-    references. This is where the PRD's 'instructor review & approval
-    workflow' and 'versioning' requirements actually get enforced."""
+    references."""
     state["current_step"] = "finalize"
 
     if state.get("error"):
@@ -159,16 +193,18 @@ async def finalize_node(state: GraphState) -> GraphState:
             quality = state.get("quality_results", {}).get(content_type, {})
             version = db.get_next_version(state["source_id"], content_type)
             for item in items:
+                raw_payload = item.get("payload", item)
+                normalized_payload = _normalize_payload(content_type, raw_payload)
                 db.insert_generated_content(
                     organization_id=state["organization_id"],
                     source_id=state["source_id"],
                     content_type=content_type,
-                    payload=item.get("payload", item),
+                    payload=normalized_payload,
                     format=item.get("format", "na"),
                     bloom_level=item.get("bloom_level"),
                     quality_score=quality.get("score"),
                     version=version,
-                    status="pending_review",  # instructor gate, per PRD
+                    status="pending_review",
                 )
 
         db.insert_curated_references(
@@ -229,7 +265,8 @@ def get_graph():
 
 
 async def run_pipeline(job_id: str, source_id: str, organization_id: str,
-                        course_id: Optional[str], source_type: str, source_url: str) -> GraphState:
+                        course_id: Optional[str], source_type: str, source_url: str,
+                        requested_counts: Optional[dict] = None) -> GraphState:
     initial_state: GraphState = {
         "job_id": job_id,
         "source_id": source_id,
@@ -237,6 +274,7 @@ async def run_pipeline(job_id: str, source_id: str, organization_id: str,
         "course_id": course_id,
         "source_type": source_type,
         "source_url": source_url,
+        "requested_counts": requested_counts or {"quiz": 5, "flashcard": 5, "summary": 1, "exercise": 2},
         "raw_text": "",
         "learning_objectives": [],
         "key_concepts": [],
@@ -253,3 +291,35 @@ async def run_pipeline(job_id: str, source_id: str, organization_id: str,
     graph = get_graph()
     final_state = await graph.ainvoke(initial_state, config={"recursion_limit": 50})
     return final_state
+
+
+async def stream_pipeline(job_id: str, source_id: str, organization_id: str,
+                           course_id: Optional[str], source_type: str, source_url: str,
+                           requested_counts: Optional[dict] = None):
+    initial_state: GraphState = {
+        "job_id": job_id,
+        "source_id": source_id,
+        "organization_id": organization_id,
+        "course_id": course_id,
+        "source_type": source_type,
+        "source_url": source_url,
+        "requested_counts": requested_counts or {"quiz": 5, "flashcard": 5, "summary": 1, "exercise": 2},
+        "raw_text": "",
+        "learning_objectives": [],
+        "key_concepts": [],
+        "current_content_type": "",
+        "content_type_index": 0,
+        "generated_items": {},
+        "quality_results": {},
+        "regeneration_attempts": {},
+        "curated_references": [],
+        "status": "processing",
+        "current_step": "queued",
+        "error": None,
+    }
+    graph = get_graph()
+    async for event in graph.astream(initial_state, config={"recursion_limit": 50}):
+        node_name = list(event.keys())[0] if event else "queued"
+        state = list(event.values())[0] if event else {}
+        step = state.get("current_step", node_name)
+        yield {"node": node_name, "step": step, "state": state}

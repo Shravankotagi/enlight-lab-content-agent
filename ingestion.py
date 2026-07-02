@@ -22,16 +22,41 @@ async def fetch_bytes(url: str) -> bytes:
         return resp.content
 
 
-async def extract_pdf_text(source_url: str) -> str:
-    """Downloads a PDF from storage (e.g. Supabase Storage signed URL) and
-    extracts text page by page."""
-    raw = await fetch_bytes(source_url)
+def parse_pdf_bytes(raw: bytes) -> str:
+    """Extracts text page by page from raw PDF bytes."""
     reader = PdfReader(BytesIO(raw))
     pages = []
-    for i, page in enumerate(reader.pages):
+    for page in reader.pages:
         text = page.extract_text() or ""
-        pages.append(text)
-    return "\n\n".join(pages)
+        lines = []
+        for line in text.splitlines():
+            s = line.strip()
+            if not s:
+                continue
+            # Strip trivial page numbers (e.g. "Page 1", "1 of 10", "1")
+            if re.match(r"^(page\s+\d+(\s+of\s+\d+)?|\d+)$", s, re.IGNORECASE):
+                continue
+            lines.append(s)
+        if lines:
+            pages.append("\n".join(lines))
+    
+    full_text = "\n\n".join(pages).strip()
+    if not full_text or len(full_text) < 10:
+        raise ValueError("no extractable text — scanned PDFs not supported yet")
+    return full_text
+
+
+async def extract_pdf_text(source_url: str) -> str:
+    """Downloads a PDF or text file from storage and extracts text page by page."""
+    raw = await fetch_bytes(source_url)
+    if raw.startswith(b"%PDF"):
+        return parse_pdf_bytes(raw)
+    
+    # Pre-extracted text file
+    text = raw.decode("utf-8", errors="ignore").strip()
+    if not text or len(text) < 10:
+        raise ValueError("no extractable text — scanned PDFs not supported yet")
+    return text
 
 
 async def extract_video_transcript_text(source_url: str) -> str:

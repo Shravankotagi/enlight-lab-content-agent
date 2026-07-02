@@ -75,6 +75,10 @@ class IngestRequest(BaseModel):
     # upload-then-ingest flow.
     source_url: str
     filename: Optional[str] = None
+    quiz_count: Optional[int] = 5
+    flashcard_count: Optional[int] = 5
+    summary_count: Optional[int] = 1
+    exercise_count: Optional[int] = 2
 
 
 class IngestResponse(BaseModel):
@@ -114,6 +118,13 @@ class GeneratedContentItem(BaseModel):
 class ReviewDecision(BaseModel):
     reviewer_id: str
     decision: ReviewStatus  # approved | rejected
+    notes: Optional[str] = None
+
+
+class BatchReviewRequest(BaseModel):
+    reviewer_id: str
+    decision: ReviewStatus  # approved | rejected
+    content_ids: list[str]
     notes: Optional[str] = None
 
 

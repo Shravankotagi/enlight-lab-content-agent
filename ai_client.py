@@ -43,29 +43,42 @@ Extract 3-6 learning objectives and 5-10 key concepts from this material:
 {raw_text[:12000]}
 ---
 """
-    resp = _client.models.generate_content(model=MODEL_NAME, contents=prompt)
+    resp = _client.models.generate_content(
+        model=MODEL_NAME,
+        contents=prompt,
+        config=types.GenerateContentConfig(response_mime_type="application/json")
+    )
     return _parse_json(resp.text)
 
 
 async def generate_content_batch(content_type: str, learning_objectives: list[str],
-                                  key_concepts: list[str], raw_text: str) -> dict:
+                                  key_concepts: list[str], raw_text: str,
+                                  requested_counts: dict = None) -> dict:
     """Generates a batch of content items for one content_type AND a quality
-    self-assessment in a single call (merged to reduce API calls).
+    self-assessment in a single call.
     Returns: {"items": [...], "quality": {"passed": bool, "score": 0-100, "issues": [...]}}"""
     if not _HAS_KEY:
         _mock_warning(f"generate_content_batch:{content_type}")
         return {"items": _mock_content(content_type), "quality": {"passed": True, "score": 75.0, "issues": []}}
 
+    if not requested_counts:
+        requested_counts = {}
+
+    quiz_cnt = requested_counts.get("quiz", 5)
+    flash_cnt = requested_counts.get("flashcard", 5)
+    summary_cnt = requested_counts.get("summary", 1)
+    exercise_cnt = requested_counts.get("exercise", 2)
+
     format_guidance = {
-        "quiz": "Generate 5 quiz questions. Mix formats: some 'mcq' (multiple choice "
+        "quiz": f"Generate exactly {quiz_cnt} quiz questions. Mix formats: some 'mcq' (multiple choice "
                 "with 4 options and one correct answer), some 'open_ended'. Tag each "
                 "with a Bloom's Taxonomy level (remember, understand, apply, analyze, "
                 "evaluate, create) matched to the question's cognitive demand.",
-        "flashcard": "Generate 8 flashcards, each a concise term/concept on the front "
-                     "and a clear definition/explanation on the back.",
-        "summary": "Generate 1 structured summary of the material: a short overview "
-                   "paragraph plus 4-6 bullet-point key takeaways.",
-        "exercise": "Generate 2 practice exercises. At least one should be a "
+        "flashcard": f"Generate exactly {flash_cnt} flashcards. Each flashcard MUST be a JSON object with keys "
+                     "'front' (the term, concept, or question) and 'back' (the clear definition, explanation, or answer).",
+        "summary": f"Generate exactly {summary_cnt} structured summary of the material. Each summary item "
+                   "MUST be a JSON object with keys 'summary' (a concise overview paragraph) and 'key_takeaways' (a list of 4-6 bullet point takeaways). Do NOT format summaries as multiple choice questions.",
+        "exercise": f"Generate exactly {exercise_cnt} practice exercises. At least one should be a "
                     "'case_study' format (a realistic scenario with an open-ended "
                     "prompt), tagged with an appropriate Bloom's level (typically "
                     "apply, analyze, or evaluate). Exercises must NOT be multiple-choice (MCQ) format. "
@@ -92,7 +105,11 @@ Source material:
 {raw_text[:12000]}
 ---
 """
-    resp = _client.models.generate_content(model=MODEL_NAME, contents=prompt)
+    resp = _client.models.generate_content(
+        model=MODEL_NAME,
+        contents=prompt,
+        config=types.GenerateContentConfig(response_mime_type="application/json")
+    )
     result = _parse_json(resp.text)
     if "items" not in result:
         result = {"items": result if isinstance(result, list) else [], "quality": {"passed": True, "score": None, "issues": []}}
@@ -147,14 +164,34 @@ a JSON array where each element has this shape:
 # ---------------------------------------------------------------------------
 
 def _parse_json(text: str):
-    """Gemini sometimes wraps JSON in markdown fences despite instructions
-    not to. Strip those before parsing."""
+    """Parses JSON text robustly, handling code fences and unexpected wrapping."""
+    if not text:
+        return {}
     cleaned = text.strip()
-    if cleaned.startswith("```"):
-        cleaned = cleaned.split("```")[1]
-        if cleaned.startswith("json"):
-            cleaned = cleaned[4:]
-    return json.loads(cleaned.strip())
+    if "```" in cleaned:
+        parts = cleaned.split("```")
+        for part in parts:
+            part_str = part.strip()
+            if part_str.startswith("json"):
+                part_str = part_str[4:].strip()
+            if (part_str.startswith("{") and part_str.endswith("}")) or (part_str.startswith("[") and part_str.endswith("]")):
+                try:
+                    return json.loads(part_str)
+                except Exception:
+                    pass
+    if cleaned.startswith("json\n"):
+        cleaned = cleaned[5:].strip()
+    try:
+        return json.loads(cleaned)
+    except Exception:
+        import re
+        match = re.search(r'(\{.*\}|\[.*\])', cleaned, re.DOTALL)
+        if match:
+            try:
+                return json.loads(match.group(1))
+            except Exception:
+                pass
+        raise
 
 
 def _mock_content(content_type: str) -> list[dict]:
