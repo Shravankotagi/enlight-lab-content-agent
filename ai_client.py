@@ -68,7 +68,9 @@ async def generate_content_batch(content_type: str, learning_objectives: list[st
         "exercise": "Generate 2 practice exercises. At least one should be a "
                     "'case_study' format (a realistic scenario with an open-ended "
                     "prompt), tagged with an appropriate Bloom's level (typically "
-                    "apply, analyze, or evaluate).",
+                    "apply, analyze, or evaluate). Exercises must NOT be multiple-choice (MCQ) format. "
+                    "They should be practical, open-ended activities, scenarios, or 'case_study' formats "
+                    "requiring active application or analysis of the material.",
     }
 
     prompt = f"""You are generating {content_type} content for a course, based on the
