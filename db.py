@@ -135,7 +135,7 @@ def get_review_queue(organization_id: str) -> list[dict]:
         .select("*, content_sources(filename, source_type)")
         .eq("organization_id", organization_id)
         .eq("status", "pending_review")
-        .order("created_at")
+        .order("created_at", desc=True)
         .execute()
     )
     return res.data or []
