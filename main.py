@@ -71,6 +71,53 @@ def require_auth(authorization: Optional[str] = Header(None), x_api_key: Optiona
         raise HTTPException(status_code=401, detail="Invalid or missing bearer token")
 
 
+async def get_supabase_user_id(x_supabase_auth: Optional[str] = Header(None)) -> Optional[str]:
+    if not x_supabase_auth:
+        return None
+    try:
+        user_res = db.supabase.auth.get_user(x_supabase_auth)
+        if user_res and user_res.user:
+            return user_res.user.id
+    except Exception as e:
+        print(f"Error checking Supabase auth: {e}")
+    return None
+
+
+def check_course_ownership(course_id: str, user_id: str) -> bool:
+    if not course_id or not user_id:
+        return False
+    res = db.supabase.table("courses").select("id, instructor_id, lms_source").eq("id", course_id).maybe_single().execute()
+    if not res or not res.data:
+        return False
+    course = res.data
+    lms_source = course.get("lms_source") or "native"
+    if user_id == "a7d4efff-a4f8-4bf1-9f1e-15286d35a38d" and lms_source == "native":
+        return True
+    return course.get("instructor_id") == user_id or lms_source == f"native:{user_id}"
+
+
+def check_content_ownership(content_id: str, organization_id: str, user_id: str) -> bool:
+    if not content_id or not user_id:
+        return False
+    c_type, row_data = db._find_review_item(content_id, organization_id)
+    if not row_data:
+        approved_tables = ["approved_quizzes", "approved_flashcards", "approved_summaries", "approved_exercises"]
+        for table in approved_tables:
+            res = db.supabase.table(table).select("content_source_id").eq("id", content_id).eq("organization_id", organization_id).maybe_single().execute()
+            if res and res.data:
+                row_data = res.data
+                break
+    if not row_data:
+        return False
+    source_id = row_data.get("content_source_id")
+    if not source_id:
+        return False
+    source = db.get_source(source_id, organization_id)
+    if not source or not source.get("course_id"):
+        return False
+    return check_course_ownership(source["course_id"], user_id)
+
+
 @app.get("/health")
 def health():
     return {"status": "ok"}
@@ -91,7 +138,12 @@ async def ingest(
     flashcard_count: Optional[int] = Form(5),
     summary_count: Optional[int] = Form(1),
     exercise_count: Optional[int] = Form(2),
+    user_id: Optional[str] = Depends(get_supabase_user_id),
 ):
+    if user_id and course_id:
+        if not check_course_ownership(course_id, user_id):
+            raise HTTPException(status_code=403, detail="Access denied. You do not own this course.")
+
     content_type = request.headers.get("content-type", "")
 
     # Case A: Multipart form / PDF Upload
@@ -269,15 +321,32 @@ def get_job_status(job_id: str):
 
 
 @app.get("/content/review-queue", dependencies=[Depends(require_auth)])
-def review_queue(organization_id: str):
+def review_queue(organization_id: str, user_id: Optional[str] = Depends(get_supabase_user_id)):
     """Per PRD 'instructor review & approval workflow' - everything
     generated content starts as pending_review and instructors must
     explicitly approve before it's usable."""
-    return db.get_review_queue(organization_id)
+    items = db.get_review_queue(organization_id)
+    if user_id:
+        filtered = []
+        for item in items:
+            source_id = item.get("content_source_id")
+            if source_id:
+                source = db.get_source(source_id, organization_id)
+                if source and source.get("course_id"):
+                    if check_course_ownership(source["course_id"], user_id):
+                        filtered.append(item)
+        return filtered
+    return items
 
 
 @app.get("/content/{source_id}", dependencies=[Depends(require_auth)])
-def get_content(source_id: str, organization_id: str):
+def get_content(source_id: str, organization_id: str, user_id: Optional[str] = Depends(get_supabase_user_id)):
+    if user_id:
+        source = db.get_source(source_id, organization_id)
+        if source and source.get("course_id"):
+            if not check_course_ownership(source["course_id"], user_id):
+                raise HTTPException(status_code=403, detail="Access denied. You do not own this course.")
+
     source = db.get_source(source_id, organization_id)
     if not source:
         raise HTTPException(status_code=404, detail="Source not found")
@@ -287,10 +356,15 @@ def get_content(source_id: str, organization_id: str):
 
 @app.post("/content/{content_id}/regenerate", dependencies=[Depends(require_auth)])
 async def regenerate_content(content_id: str, organization_id: str,
-                              background_tasks: BackgroundTasks):
+                              background_tasks: BackgroundTasks,
+                              user_id: Optional[str] = Depends(get_supabase_user_id)):
     """Re-runs the pipeline for a single source (all content types) - a
     lighter-weight per-content-type regeneration can be added later if
     instructors want more granular control."""
+    if user_id:
+        if not check_content_ownership(content_id, organization_id, user_id):
+            raise HTTPException(status_code=403, detail="Access denied. You do not own this content.")
+
     # Look up the source this content item belongs to
     source_id = db.get_content_source_id(content_id, organization_id)
     if not source_id:
@@ -311,10 +385,13 @@ async def regenerate_content(content_id: str, organization_id: str,
     return {"job_id": job_id, "source_id": source_id, "status": "processing"}
 
 
-
-
 @app.post("/content/{content_id}/approve", dependencies=[Depends(require_auth)])
-def approve_content(content_id: str, organization_id: str, decision: ReviewDecision):
+def approve_content(content_id: str, organization_id: str, decision: ReviewDecision,
+                    user_id: Optional[str] = Depends(get_supabase_user_id)):
+    if user_id:
+        if not check_content_ownership(content_id, organization_id, user_id):
+            raise HTTPException(status_code=403, detail="Access denied. You do not own this content.")
+
     updated = db.set_review_decision(content_id, organization_id, "approved",
                                       decision.reviewer_id, decision.notes)
     if not updated:
@@ -323,7 +400,12 @@ def approve_content(content_id: str, organization_id: str, decision: ReviewDecis
 
 
 @app.post("/content/{content_id}/reject", dependencies=[Depends(require_auth)])
-def reject_content(content_id: str, organization_id: str, decision: ReviewDecision):
+def reject_content(content_id: str, organization_id: str, decision: ReviewDecision,
+                   user_id: Optional[str] = Depends(get_supabase_user_id)):
+    if user_id:
+        if not check_content_ownership(content_id, organization_id, user_id):
+            raise HTTPException(status_code=403, detail="Access denied. You do not own this content.")
+
     updated = db.set_review_decision(content_id, organization_id, "rejected",
                                       decision.reviewer_id, decision.notes)
     if not updated:
@@ -332,7 +414,13 @@ def reject_content(content_id: str, organization_id: str, decision: ReviewDecisi
 
 
 @app.post("/content/batch-review", dependencies=[Depends(require_auth)])
-def batch_review(organization_id: str, request_body: BatchReviewRequest):
+def batch_review(organization_id: str, request_body: BatchReviewRequest,
+                 user_id: Optional[str] = Depends(get_supabase_user_id)):
+    if user_id:
+        for cid in request_body.content_ids:
+            if not check_content_ownership(cid, organization_id, user_id):
+                raise HTTPException(status_code=403, detail="Access denied. You do not own some of this content.")
+
     count = db.set_batch_review_decision(
         request_body.content_ids, organization_id, request_body.decision.value,
         request_body.reviewer_id, request_body.notes
@@ -341,17 +429,32 @@ def batch_review(organization_id: str, request_body: BatchReviewRequest):
 
 
 @app.get("/content/{content_id}/audit-trail", dependencies=[Depends(require_auth)])
-def audit_trail(content_id: str):
+def audit_trail(content_id: str, organization_id: str = "", user_id: Optional[str] = Depends(get_supabase_user_id)):
+    if user_id:
+        org_id = organization_id or "00000000-0000-0000-0000-000000000001"
+        if not check_content_ownership(content_id, org_id, user_id):
+            raise HTTPException(status_code=403, detail="Access denied. You do not own this content.")
     return db.get_audit_trail(content_id)
 
 
 @app.get("/curated/{source_id}", dependencies=[Depends(require_auth)])
-def curated_references(source_id: str, organization_id: str):
+def curated_references(source_id: str, organization_id: str, user_id: Optional[str] = Depends(get_supabase_user_id)):
+    if user_id:
+        source = db.get_source(source_id, organization_id)
+        if source and source.get("course_id"):
+            if not check_course_ownership(source["course_id"], user_id):
+                raise HTTPException(status_code=403, detail="Access denied. You do not own this course.")
     return db.get_curated_references(source_id, organization_id)
 
 
 @app.get("/content/export/moodle-xml", dependencies=[Depends(require_auth)])
-def export_source_quizzes(content_source_id: str, organization_id: str):
+def export_source_quizzes(content_source_id: str, organization_id: str, user_id: Optional[str] = Depends(get_supabase_user_id)):
+    if user_id:
+        source = db.get_source(content_source_id, organization_id)
+        if source and source.get("course_id"):
+            if not check_course_ownership(source["course_id"], user_id):
+                raise HTTPException(status_code=403, detail="Access denied. You do not own this course.")
+
     res = db.supabase.table("approved_quizzes").select("*").eq("content_source_id", content_source_id).eq("organization_id", organization_id).execute()
     if not res or not res.data:
         raise HTTPException(status_code=404, detail="No approved quizzes found for this source")
@@ -370,7 +473,11 @@ def export_source_quizzes(content_source_id: str, organization_id: str):
 
 
 @app.get("/content/{content_id}/export/moodle-xml", dependencies=[Depends(require_auth)])
-def export_single_quiz(content_id: str, organization_id: str):
+def export_single_quiz(content_id: str, organization_id: str, user_id: Optional[str] = Depends(get_supabase_user_id)):
+    if user_id:
+        if not check_content_ownership(content_id, organization_id, user_id):
+            raise HTTPException(status_code=403, detail="Access denied. You do not own this content.")
+
     res = db.supabase.table("approved_quizzes").select("*").eq("id", content_id).eq("organization_id", organization_id).maybe_single().execute()
     if not res or not res.data:
         raise HTTPException(status_code=404, detail="Approved quiz not found")

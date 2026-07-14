@@ -205,10 +205,13 @@ def insert_generated_content(organization_id: str, source_id: str, content_type:
     else:
         raise ValueError(f"Unknown content type: {content_type}")
 
+    source = get_source(source_id, organization_id)
+    course_id = source.get("course_id") if source else None
+
     common = {
         "organization_id": organization_id,
         "content_source_id": source_id,
-        "course_id": None,
+        "course_id": course_id,
         "bloom_level": bloom_level,
         "quality_score": quality_score,
         "version": version
